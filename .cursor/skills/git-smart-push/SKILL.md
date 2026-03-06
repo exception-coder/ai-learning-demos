@@ -1,11 +1,11 @@
 ---
 name: git-smart-push
-description: Analyze local code changes, automatically generate meaningful commit messages based on the changes, and push to remote repository. Use when the user wants to commit and push changes with auto-generated commit messages, or needs help writing good commit messages.
+description: Analyze local code changes, automatically generate meaningful commit messages based on the changes, and push to remote repository (GitHub, GitLab, Gitee, Alibaba Cloud DevOps, etc.). Use when the user wants to commit and push changes with auto-generated commit messages, or needs help writing good commit messages.
 ---
 
 # Git Smart Push
 
-智能分析本地代码变更，自动生成有意义的 commit 信息并推送到远程仓库。
+智能分析本地代码变更，自动生成有意义的 commit 信息并推送到远程仓库（支持 GitHub、GitLab、Gitee、阿里云效等）。
 
 ## 必需参数
 
@@ -16,10 +16,57 @@ description: Analyze local code changes, automatically generate meaningful commi
 | `project_root` | 本地项目根目录绝对路径 | `D:/Users/zhang/IdeaProjects/my-project` | 当前工作目录 |
 | `branch` | 要推送的分支名称 | `main` / `develop` / `feature/xxx` | 当前分支 |
 | `commit_type` | commit 类型（可选） | `feat` / `fix` / `docs` / `refactor` / `auto` | `auto`（自动判断） |
+| `access_token` | Personal Access Token（仅在推送时需要） | `ghp_xxxx` / `glpat-xxxx` / `xxx` | 无 |
+| `username` | Git 用户名（仅在需要认证时提供） | `your-username` | 从远程 URL 自动提取 |
+
+**说明：**
+- `access_token`：在推送到远程仓库时需要提供，用于身份认证
+  - GitHub: Personal Access Token (以 `ghp_` 开头)
+  - GitLab: Personal Access Token (以 `glpat-` 开头)
+  - Gitee: 私人令牌
+  - 阿里云效: 个人访问令牌
+- `username`：通常从远程 URL 自动提取，如果远程 URL 是 SSH 格式则不需要
 
 ## 执行流程
 
 按以下步骤严格顺序执行：
+
+### Step 0: 检查远程仓库配置
+
+```bash
+cd <project_root>
+git remote -v
+git remote get-url origin
+```
+
+**判断：**
+- 如果没有配置远程仓库，提示用户先使用 `git-init-remote` skill 或手动添加远程仓库
+- 如果已配置远程仓库，自动获取远程 URL 和仓库类型：
+  - GitHub: `github.com`
+  - GitLab: `gitlab.com` 或自建 GitLab
+  - Gitee: `gitee.com`
+  - 阿里云效: `codeup.aliyun.com`
+  - 其他 Git 服务
+- 从远程 URL 提取用户名（如果是 HTTPS 格式）
+
+**示例远程 URL：**
+```
+# GitHub
+https://github.com/username/repo.git
+git@github.com:username/repo.git
+
+# GitLab
+https://gitlab.com/username/repo.git
+git@gitlab.com:username/repo.git
+
+# Gitee
+https://gitee.com/username/repo.git
+git@gitee.com:username/repo.git
+
+# 阿里云效
+https://codeup.aliyun.com/username/repo.git
+git@codeup.aliyun.com:username/repo.git
+```
 
 ### Step 1: 检查 Git 状态
 
@@ -166,14 +213,45 @@ git commit -m "<生成的 commit 信息>"
 
 ### Step 6: 推送到远程
 
+根据远程仓库类型和 URL 格式，使用不同的推送方式：
+
+**SSH 方式（推荐）：**
 ```bash
 git push origin <branch>
 ```
 
+**HTTPS 方式（需要认证）：**
+
+如果远程 URL 是 HTTPS 格式，需要使用 Personal Access Token 进行认证。
+
+**方法 1：临时设置凭证（推荐）**
+```bash
+# 构造带认证的 URL
+git push https://<username>:<access_token>@<host>/<path> <branch>
+```
+
+**方法 2：使用 Git Credential Helper**
+```bash
+# 临时存储凭证
+git config credential.helper store
+echo "https://<username>:<access_token>@<host>" > ~/.git-credentials
+git push origin <branch>
+```
+
+**不同平台的认证方式：**
+
+| 平台 | 用户名 | Token 格式 | 示例 URL |
+|------|--------|-----------|---------|
+| GitHub | GitHub 用户名 | `ghp_xxxx` | `https://username:ghp_xxxx@github.com/user/repo.git` |
+| GitLab | GitLab 用户名 | `glpat-xxxx` | `https://username:glpat-xxxx@gitlab.com/user/repo.git` |
+| Gitee | Gitee 用户名 | 私人令牌 | `https://username:token@gitee.com/user/repo.git` |
+| 阿里云效 | 云效用户名 | 个人访问令牌 | `https://username:token@codeup.aliyun.com/user/repo.git` |
+
 **错误处理：**
 - 如果远程分支不存在，使用 `git push -u origin <branch>` 创建并推送
 - 如果推送被拒绝（远程有新提交），提示用户先执行 `git pull --rebase`
-- 如果认证失败，提示检查 Git 凭证
+- 如果认证失败，提示检查 Personal Access Token 是否正确
+- 如果网络超时，提示检查网络连接或切换到 SSH 方式
 
 ### Step 7: 验证并反馈
 
@@ -185,6 +263,7 @@ git status
 向用户确认：
 - Commit 信息
 - 推送的分支
+- 远程仓库地址
 - 最新的 commit hash
 - 工作目录状态
 
@@ -266,7 +345,20 @@ feat(user): 添加用户登录功能
 ```
 ✅ 提交成功！
 
+检测到远程仓库：https://github.com/username/repo.git
+
 是否推送到远程分支 'main'？(Y/n)
+```
+
+如果用户确认推送且远程 URL 是 HTTPS 格式，询问 Personal Access Token：
+
+```
+🔐 需要身份认证
+
+远程仓库：GitHub (github.com)
+用户名：username（从远程 URL 自动提取）
+
+请提供 Personal Access Token：
 ```
 
 ## 安全检查
@@ -284,17 +376,23 @@ feat(user): 添加用户登录功能
 3. **分支检查**
    - 如果当前在 `main` 或 `master` 分支，提示用户是否确认直接推送到主分支
 
+4. **Token 安全**
+   - 提醒用户不要在公共场合泄露 Personal Access Token
+   - Token 仅用于本次推送，不会被存储（除非用户选择使用 credential helper）
+
 ## 错误处理
 
 | 错误场景 | 处理方式 |
 |---------|---------|
 | 不是 Git 仓库 | 提示用户先初始化 Git 或使用 `git-init-remote` skill |
-| 没有远程仓库 | 提示用户先添加远程仓库 |
+| 没有远程仓库 | 提示用户先添加远程仓库或使用 `git-init-remote` skill |
 | 工作目录干净 | 提示无需提交，终止执行 |
 | Commit 失败 | 显示错误信息，询问是否重试 |
 | Push 被拒绝 | 提示先 pull，询问是否执行 `git pull --rebase` |
-| 认证失败 | 提示检查 Git 凭证或使用 SSH |
-| 网络超时 | 提示检查网络连接 |
+| 认证失败 | 提示检查 Personal Access Token 是否正确，或切换到 SSH 方式 |
+| Token 格式错误 | 提示用户检查 Token 格式（GitHub: `ghp_`, GitLab: `glpat-`） |
+| 网络超时 | 提示检查网络连接或切换到 SSH 方式 |
+| 权限不足 | 提示检查 Token 权限或仓库访问权限 |
 
 ## 高级选项
 
@@ -306,14 +404,16 @@ feat(user): 添加用户登录功能
 | `--amend` | 修改上一次提交 | false |
 | `--force` | 强制推送（慎用） | false |
 | `--dry-run` | 仅显示将要执行的操作，不实际执行 | false |
+| `--ssh` | 强制使用 SSH 方式推送 | false |
 
 ## 示例场景
 
-### 场景 1：简单功能开发
+### 场景 1：简单功能开发（GitHub）
 
 ```
 用户：帮我提交并推送代码
 
+远程仓库：https://github.com/username/my-project.git
 变更：
 - 新增 UserService.java
 - 修改 UserController.java
@@ -323,13 +423,16 @@ feat(user): 添加用户服务层
 
 - 新增 UserService 处理用户业务逻辑
 - 更新 UserController 调用服务层
+
+推送：需要提供 GitHub Personal Access Token (ghp_xxxx)
 ```
 
-### 场景 2：Bug 修复
+### 场景 2：Bug 修复（阿里云效）
 
 ```
 用户：修复了一个登录 bug，帮我提交
 
+远程仓库：https://codeup.aliyun.com/username/my-project.git
 变更：
 - 修改 AuthService.java（10 行）
 
@@ -337,25 +440,31 @@ feat(user): 添加用户服务层
 fix(auth): 修复登录验证失败的问题
 
 修复了空指针异常导致的登录失败
+
+推送：需要提供阿里云效个人访问令牌
 ```
 
-### 场景 3：文档更新
+### 场景 3：文档更新（Gitee）
 
 ```
 用户：更新了 README，提交一下
 
+远程仓库：https://gitee.com/username/my-project.git
 变更：
 - 修改 README.md
 
 生成：
 docs: 更新 README 安装说明
+
+推送：需要提供 Gitee 私人令牌
 ```
 
-### 场景 4：大型重构
+### 场景 4：SSH 方式推送（GitLab）
 
 ```
 用户：重构了数据库层，提交推送
 
+远程仓库：git@gitlab.com:username/my-project.git
 变更：
 - 重命名 10+ 个文件
 - 修改 20+ 个文件
@@ -368,4 +477,37 @@ refactor(database): 重构数据库访问层
 - 优化 DAO 层结构
 - 移除废弃的数据库工具类
 - 更新所有调用方代码
+
+推送：使用 SSH 方式，无需提供 Token
 ```
+
+## Personal Access Token 获取指南
+
+### GitHub
+1. 访问 Settings → Developer settings → Personal access tokens → Tokens (classic)
+2. 点击 "Generate new token"
+3. 选择权限：`repo`（完整仓库访问权限）
+4. 生成后复制 Token（格式：`ghp_xxxxxxxxxxxx`）
+
+### GitLab
+1. 访问 User Settings → Access Tokens
+2. 创建新 Token
+3. 选择权限：`write_repository`
+4. 生成后复制 Token（格式：`glpat-xxxxxxxxxxxx`）
+
+### Gitee
+1. 访问 设置 → 私人令牌
+2. 生成新令牌
+3. 选择权限：`projects`
+4. 生成后复制令牌
+
+### 阿里云效
+1. 访问 个人设置 → 个人访问令牌
+2. 新建令牌
+3. 选择权限：`代码库读写`
+4. 生成后复制令牌
+
+**注意：**
+- Token 生成后只显示一次，请妥善保管
+- 定期更新 Token 以提高安全性
+- 不要将 Token 提交到代码仓库

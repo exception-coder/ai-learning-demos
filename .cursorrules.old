@@ -1,0 +1,571 @@
+# AI Learning Demos 项目规则
+
+## 1. 技术栈要求
+
+### 1.1 Spring AI 集成规范
+本项目**必须优先使用 Spring AI 框架**进行 AI 相关功能开发，禁止直接调用原生 SDK。
+
+#### 依赖管理
+```xml
+<!-- 父 pom.xml 中添加 Spring AI BOM -->
+<spring-ai.version>1.0.0-M4</spring-ai.version>
+
+<dependencyManagement>
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-bom</artifactId>
+            <version>${spring-ai.version}</version>
+            <type>pom</type>
+            <scope>import</scope>
+        </dependency>
+    </dependencies>
+</dependencyManagement>
+```
+
+#### 支持的 AI 模型提供商
+- **OpenAI**: `spring-ai-openai-spring-boot-starter`
+- **Azure OpenAI**: `spring-ai-azure-openai-spring-boot-starter`
+- **Ollama**: `spring-ai-ollama-spring-boot-starter`
+- **通义千问**: `spring-ai-alibaba-starter`
+- **智谱 AI**: `spring-ai-zhipuai-spring-boot-starter`
+
+### 1.2 架构规范
+
+#### DDD 分层架构
+```
+src/main/java/com/learning/
+├── controller/          # API 层 - 仅处理协议转换
+├── application/         # 应用层 - 编排用例
+│   ├── service/        # 应用服务
+│   └── dto/            # 数据传输对象
+├── domain/             # 领域层 - 业务规则
+│   ├── model/          # 领域模型
+│   ├── service/        # 领域服务
+│   └── repository/     # 仓储接口
+└── infrastructure/     # 基础设施层
+    ├── ai/             # AI 集成（Spring AI）
+    ├── persistence/    # 数据持久化
+    └── config/         # 配置
+```
+
+## 2. Spring AI 开发规范
+
+### 2.1 ChatClient 使用规范
+
+**强制使用 ChatClient 而非 ChatModel**
+
+```java
+// ✅ 正确：使用 ChatClient（推荐）
+@Service
+public class AiService {
+    private final ChatClient chatClient;
+    
+    public AiService(ChatClient.Builder chatClientBuilder) {
+        this.chatClient = chatClientBuilder.build();
+    }
+    
+    public String chat(String userMessage) {
+        return chatClient.prompt()
+            .user(userMessage)
+            .call()
+            .content();
+    }
+}
+
+// ❌ 错误：直接使用 ChatModel（不推荐）
+@Service
+public class AiService {
+    private final ChatModel chatModel;
+    
+    public AiService(ChatModel chatModel) {
+        this.chatModel = chatModel;
+    }
+}
+```
+
+### 2.2 Prompt 工程规范
+
+#### 使用 PromptTemplate
+```java
+// ✅ 正确：使用 PromptTemplate
+@Service
+public class WeatherService {
+    private final ChatClient chatClient;
+    
+    public String getWeather(String city) {
+        String template = """
+            请告诉我{city}今天的天气情况。
+            要求：简洁明了，包含温度、天气状况、风力。
+            """;
+            
+        return chatClient.prompt()
+            .user(u -> u.text(template).param("city", city))
+            .call()
+            .content();
+    }
+}
+```
+
+#### 使用外部 Prompt 文件
+```java
+// resources/prompts/weather.st
+// 你是一个天气助手。
+// 用户询问：{city}的天气
+// 请提供准确的天气信息。
+
+@Service
+public class WeatherService {
+    private final ChatClient chatClient;
+    
+    @Value("classpath:/prompts/weather.st")
+    private Resource promptResource;
+    
+    public String getWeather(String city) {
+        PromptTemplate template = new PromptTemplate(promptResource);
+        return chatClient.prompt(template.create(Map.of("city", city)))
+            .call()
+            .content();
+    }
+}
+```
+
+### 2.3 Function Calling 规范
+
+**使用 Spring AI 的 @Tool 注解定义工具**
+
+```java
+// ✅ 正确：使用 @Tool 注解
+@Component
+public class WeatherTools {
+    
+    @Tool(description = "获取指定城市的天气信息")
+    public WeatherInfo getWeather(
+        @ToolParam(description = "城市名称") String city
+    ) {
+        // 实现天气查询逻辑
+        return new WeatherInfo(city, "晴", 25);
+    }
+    
+    public record WeatherInfo(String city, String condition, int temperature) {}
+}
+
+// 在 Service 中注册工具
+@Service
+public class AgentService {
+    private final ChatClient chatClient;
+    
+    public AgentService(ChatClient.Builder builder, WeatherTools weatherTools) {
+        this.chatClient = builder
+            .defaultFunctions("getWeather") // 注册工具
+            .build();
+    }
+    
+    public String chat(String message) {
+        return chatClient.prompt()
+            .user(message)
+            .call()
+            .content();
+    }
+}
+```
+
+### 2.4 RAG（检索增强生成）规范
+
+#### 向量存储
+```java
+// 配置向量存储
+@Configuration
+public class VectorStoreConfig {
+    
+    @Bean
+    public VectorStore vectorStore(EmbeddingModel embeddingModel) {
+        return new SimpleVectorStore(embeddingModel);
+    }
+}
+
+// 使用 RAG
+@Service
+public class RagService {
+    private final ChatClient chatClient;
+    private final VectorStore vectorStore;
+    
+    public String chatWithContext(String question) {
+        // 1. 检索相关文档
+        List<Document> docs = vectorStore.similaritySearch(
+            SearchRequest.query(question).withTopK(3)
+        );
+        
+        // 2. 构建上下文
+        String context = docs.stream()
+            .map(Document::getContent)
+            .collect(Collectors.joining("\n"));
+        
+        // 3. 生成回答
+        return chatClient.prompt()
+            .system("基于以下上下文回答问题：\n" + context)
+            .user(question)
+            .call()
+            .content();
+    }
+}
+```
+
+### 2.5 流式响应规范
+
+```java
+@RestController
+public class StreamController {
+    private final ChatClient chatClient;
+    
+    @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<String> stream(@RequestParam String message) {
+        return chatClient.prompt()
+            .user(message)
+            .stream()
+            .content();
+    }
+}
+```
+
+### 2.6 多模态支持规范
+
+```java
+@Service
+public class MultiModalService {
+    private final ChatClient chatClient;
+    
+    public String analyzeImage(byte[] imageData, String question) {
+        return chatClient.prompt()
+            .user(u -> u
+                .text(question)
+                .media(MimeTypeUtils.IMAGE_PNG, imageData)
+            )
+            .call()
+            .content();
+    }
+}
+```
+
+## 3. 配置管理规范
+
+### 3.1 配置文件结构
+```yaml
+spring:
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY}
+      base-url: https://api.openai.com
+      chat:
+        options:
+          model: gpt-4
+          temperature: 0.7
+          max-tokens: 2000
+    
+    ollama:
+      base-url: http://localhost:11434
+      chat:
+        options:
+          model: llama2
+```
+
+### 3.2 动态配置刷新
+- Configuration 类必须添加 `@RefreshScope`
+- 避免 `@RefreshScope` Bean 之间的依赖注入
+- 使用 `RefreshScope.refreshAll()` 刷新配置
+
+## 4. 依赖注入规范
+
+**强制使用构造函数注入，禁止字段注入**
+
+```java
+// ✅ 正确
+@Service
+public class AiService {
+    private final ChatClient chatClient;
+    private final VectorStore vectorStore;
+    
+    public AiService(ChatClient.Builder builder, VectorStore vectorStore) {
+        this.chatClient = builder.build();
+        this.vectorStore = vectorStore;
+    }
+}
+
+// ❌ 错误
+@Service
+public class AiService {
+    @Autowired
+    private ChatClient chatClient;
+}
+```
+
+## 5. 测试规范
+
+### 5.1 单元测试
+```java
+@SpringBootTest
+class AiServiceTest {
+    
+    @Autowired
+    private AiService aiService;
+    
+    @Test
+    void testChat() {
+        String response = aiService.chat("你好");
+        assertThat(response).isNotEmpty();
+    }
+}
+```
+
+### 5.2 Mock 测试
+```java
+@ExtendWith(MockitoExtension.class)
+class AiServiceTest {
+    
+    @Mock
+    private ChatClient chatClient;
+    
+    @InjectMocks
+    private AiService aiService;
+    
+    @Test
+    void testChat() {
+        when(chatClient.prompt().user("test").call().content())
+            .thenReturn("mocked response");
+            
+        String response = aiService.chat("test");
+        assertEquals("mocked response", response);
+    }
+}
+```
+
+## 6. 错误处理规范
+
+```java
+@Service
+public class AiService {
+    private final ChatClient chatClient;
+    
+    public String chat(String message) {
+        try {
+            return chatClient.prompt()
+                .user(message)
+                .call()
+                .content();
+        } catch (Exception e) {
+            log.error("AI 调用失败", e);
+            throw new AiServiceException("AI 服务暂时不可用", e);
+        }
+    }
+}
+```
+
+## 7. 性能优化规范
+
+### 7.1 使用缓存
+```java
+@Service
+public class AiService {
+    
+    @Cacheable(value = "ai-responses", key = "#message")
+    public String chat(String message) {
+        return chatClient.prompt()
+            .user(message)
+            .call()
+            .content();
+    }
+}
+```
+
+### 7.2 异步处理
+```java
+@Service
+public class AiService {
+    
+    @Async
+    public CompletableFuture<String> chatAsync(String message) {
+        String response = chatClient.prompt()
+            .user(message)
+            .call()
+            .content();
+        return CompletableFuture.completedFuture(response);
+    }
+}
+```
+
+## 8. 日志规范
+
+```java
+@Slf4j
+@Service
+public class AiService {
+    
+    public String chat(String message) {
+        log.info("收到 AI 请求，消息长度：{}", message.length());
+        
+        long startTime = System.currentTimeMillis();
+        String response = chatClient.prompt()
+            .user(message)
+            .call()
+            .content();
+        
+        long duration = System.currentTimeMillis() - startTime;
+        log.info("AI 响应完成，耗时：{}ms，响应长度：{}", duration, response.length());
+        
+        return response;
+    }
+}
+```
+
+## 9. 文档管理规范
+
+### 9.1 文档目录结构
+
+```
+/docs/
+├── dev-log.md              # 开发日志（记录所有开发任务）
+├── learning-journal.md     # 学习日志（记录疑问和解答）
+├── learning-notes.md       # 学习笔记
+├── quick-start.md          # 快速开始指南
+└── guides/                 # 技术指南目录
+    ├── README.md           # 指南索引
+    ├── 01-xxx.md           # 技术指南文档
+    ├── 02-xxx.md
+    └── ...
+```
+
+### 9.2 开发日志规范
+
+每次编码任务必须在 `/docs/dev-log.md` 中追加记录：
+- 日期
+- 任务描述
+- 创建或修改的文件
+- 关键设计决策
+- 变更原因
+
+### 9.3 学习日志规范
+
+**本项目是学习型项目，必须记录所有学习过程。**
+
+每次用户提出疑问或学习新知识点时，必须在 `/docs/learning-journal.md` 中记录：
+
+**记录内容：**
+1. **疑问原文**：用户的原始问题
+2. **问题分析**：为什么会有这个疑问
+3. **详细解答**：完整的答案和原理说明
+4. **代码示例**：相关的代码对比和示例
+5. **关键要点**：提炼核心知识点
+6. **常见误区**：记录容易混淆的地方
+
+**文档结构：**
+```markdown
+## 技术疑问与解答
+
+### Q1: 问题标题
+
+**疑问：**
+> 用户的原始问题
+
+**解答：**
+详细的解答内容...
+
+**代码示例：**
+```java
+// 示例代码
+```
+
+**关键要点：**
+- 要点1
+- 要点2
+```
+
+**最终目标：**
+将学习日志整理成完整的 **从 0 到 1 的学习手册**，帮助其他初学者快速上手 Spring AI。
+
+**更新时机：**
+- 用户提出技术疑问时
+- 发现常见误区时
+- 学习新的概念或技术时
+- 完成重要的实践任务时
+
+**重要：本项目是从 0 到 1 的学习项目，用户的所有疑问都是知识盲区，必须自动记录到学习日志，无需反问用户"是否需要记录"。只要对话中出现了技术疑问和解答，一律追加到 `/docs/learning-journal.md`。**
+
+**文档维护：**
+- 保持问题的连贯性和逻辑性
+- 定期整理和归类问题
+- 补充相关的参考资料
+- 更新学习路径建议
+
+### 9.4 技术指南规范
+
+**所有技术指南文档必须统一放在 `/docs/guides/` 目录中。**
+
+**禁止在子模块目录（如 llm-demos/）中创建散乱的技术文档。**
+
+**文档命名规范：**
+- 使用数字前缀表示阅读顺序：`01-`, `02-`, `03-`...
+- 使用小写字母和连字符：`spring-ai-best-practices.md`
+- 文件名要清晰表达文档内容
+
+**示例：**
+```
+/docs/guides/
+├── README.md                           # 指南索引（必须）
+├── 01-spring-ai-best-practices.md     # Spring AI 最佳实践
+├── 02-function-calling-explained.md   # Function Calling 深度解析
+├── 03-agent-skill-guide.md            # Agent 和 Skill 指南
+└── 04-testing-guide.md                # 测试指南
+```
+
+**文档结构要求：**
+- 必须包含清晰的标题和目录
+- 使用代码示例说明概念
+- 提供实际的使用场景
+- 包含常见问题解答
+- 标注适合的读者人群
+
+**索引文件维护：**
+- 每次新增技术文档必须更新 `/docs/guides/README.md`
+- 索引文件要包含：
+  - 文档列表和内容概要
+  - 学习路径建议
+  - 文档更新记录
+
+**文档创建流程：**
+1. 在 `/docs/guides/` 目录创建新文档
+2. 使用规范的命名格式
+3. 编写完整的文档内容
+4. 更新 `/docs/guides/README.md` 索引
+5. 在开发日志中记录文档创建
+
+## 10. 文件归属规范
+
+**所有新增文件必须写入发起需求的当前项目中，禁止写入全局目录。**
+
+| 场景 | 正确位置 | 错误位置 |
+|------|---------|---------|
+| Skill 文件 | `<当前项目>/.cursor/skills/` | `~/.cursor/skills/` |
+| 配置文件 | `<当前项目>/` | 用户主目录或其他项目 |
+| 文档文件 | `<当前项目>/docs/` | 其他项目的 docs 目录 |
+| 代码文件 | `<当前项目>/src/` | 其他项目的 src 目录 |
+
+**规则：**
+1. 用户在哪个项目发起需求，所有新增/修改的文件就归属于该项目
+2. 不得将项目级别的文件放到全局 `~/.cursor/` 目录
+3. 如果确实需要全局配置，必须明确告知用户并获得确认
+
+## 11. 代码审查清单
+
+在提交代码前，确保：
+- [ ] 使用 Spring AI 而非原生 SDK
+- [ ] 使用 ChatClient 而非 ChatModel
+- [ ] 使用构造函数注入
+- [ ] 遵循 DDD 分层架构
+- [ ] 添加适当的日志
+- [ ] 编写单元测试
+- [ ] 处理异常情况
+- [ ] 新增文件在当前项目内（非全局目录）
+- [ ] 更新开发日志（`/docs/dev-log.md`）
+- [ ] 更新学习日志（`/docs/learning-journal.md`，如有疑问解答）
+- [ ] 配置支持动态刷新（如需要）
+

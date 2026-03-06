@@ -1,0 +1,34 @@
+spring:
+  application:
+    name: llm-demos
+  
+  # Spring AI 配置
+  ai:
+    # OpenAI 配置（需要 API Key）
+    openai:
+      api-key: ${OPENAI_API_KEY:your-api-key-here}
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com}
+      chat:
+        options:
+          model: gpt-4o-mini
+          temperature: 0.7
+          max-tokens: 2000
+    
+    # Ollama 配置（本地模型，推荐用于开发测试）
+    ollama:
+      base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+      chat:
+        options:
+          model: qwen2.5:7b
+          temperature: 0.7
+
+# 服务器配置
+server:
+  port: 8080
+
+# 日志配置
+logging:
+  level:
+    root: INFO
+    com.learning.llm: DEBUG
+    org.springframework.ai: DEBUG

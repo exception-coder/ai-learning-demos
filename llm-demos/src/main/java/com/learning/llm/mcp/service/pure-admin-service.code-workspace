@@ -1,0 +1,31 @@
+{
+	"folders": [
+		{
+			"path": "../../../../../../../../../../../../张凯/IdeaProjects/pure-admin-service"
+		},
+		{
+			"path": "../../../../../../../../../../pure-admin-thin-i18n"
+		},
+		{
+			"path": "../../../../../../../../../../npe_get_jobs"
+		},
+		{
+			"path": "../../../../../../../../../../../../张凯/IdeaProjects/windirstat-web"
+		},
+		{
+			"path": "../../../../../../../../../../llm-orchestration-platform"
+		},
+		{
+			"path": "../../../../../../../../../../job-interview-log"
+		},
+		{
+			"path": "../../../../../../../../../../work-memo"
+		},
+		{
+			"path": "../../../../../../../../.."
+		}
+	],
+	"settings": {
+		"java.compile.nullAnalysis.mode": "automatic"
+	}
+}

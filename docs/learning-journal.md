@@ -846,3 +846,38 @@ Answer: 昨天会议讨论的 ERP 系统，默认密码是 admin123
 
 ---
 
+
+---
+
+### Q: /plugin install superpowers 安装后 Claude Code 是如何生效的？
+
+**疑问：**
+> 执行 `/plugin install superpowers@claude-plugins-official` 之后，Claude Code 是如何加载和生效的？整个流程是什么？
+
+**解答：**
+
+分三个阶段：
+
+**第一阶段：安装**
+- 从插件源拉取 superpowers 仓库
+- 解析 `plugin.json` manifest
+- 将所有 `SKILL.md` 同步到本地 `.claude/skills/` 目录
+
+**第二阶段：加载（每次启动）**
+- Claude Code 启动时自动扫描 skill 目录
+- 读取每个 `SKILL.md` 的 frontmatter，核心是 `description` 字段
+- `description` 描述该 skill 的适用场景，是触发匹配的依据
+
+**第三阶段：触发（每次对话）**
+- 自动触发：Agent 将用户意图与所有 skill 的 description 做语义匹配，自动注入匹配的 skill 内容
+- 手动触发：直接输入 `/skill名称`，如 `/brainstorming`
+
+**关键要点：**
+- 要点：渐进式加载，skill 内的 `references/` 和 `scripts/` 只在被激活时才读入上下文
+
+**常见误区：**
+
+- ❌ 以为安装后需要手动配置每个 skill 才生效
+- ✅ 安装后自动生效，Agent 通过语义匹配自动触发，无需手动干预
+- ❌ 以为所有 skill 内容会一次性加载到上下文，消耗大量 token
+- ✅ 渐进式加载，只有被激活的 skill 才注入上下文
